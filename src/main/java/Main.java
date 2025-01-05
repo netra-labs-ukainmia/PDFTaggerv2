@@ -5,9 +5,9 @@ import java.io.*;
 public class Main {
     public static void main(String[] args) {
         try {
-            // Define input and output paths
-            String inputPath = "input/Sample Doc_Textract.pdf";
-            String outputPath = "output/Sample Doc_Textract_Tagged.pdf";
+            // Define input and output paths using resource directory
+            String inputPath = "src/main/resources/input/Sample Doc_Textract.pdf";
+            String outputPath = "src/main/resources/output/Sample Doc_Textract_Tagged.pdf";
 
             // Create PDF document
             PdfDocument pdfDoc = new PdfDocument(
