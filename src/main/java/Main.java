@@ -9,6 +9,12 @@ import org.json.JSONTokener;
 import org.json.JSONArray;
 
 public class Main {
+    // Class-level variables to track structure
+    private static PdfStructElem currentTable = null;
+    private static PdfStructElem currentTableRow = null;
+    private static PdfStructElem currentList = null;
+    private static int currentRowIndex = -1;
+
     public static void main(String[] args) {
         try {
             // Define file paths
@@ -53,6 +59,10 @@ public class Main {
             JSONArray blocks = jsonData.getJSONArray("Blocks");
             int blockCount = 0;
 
+            // Create document structure element as root
+            PdfStructElem documentRoot = new PdfStructElem(pdfDoc, PdfName.Document);
+            pdfDoc.getStructTreeRoot().addKid(documentRoot);
+
             for (int i = 0; i < blocks.length(); i++) {
                 JSONObject block = blocks.getJSONObject(i);
                 String blockType = block.getString("BlockType");
@@ -84,49 +94,82 @@ public class Main {
                 PdfDictionary properties = new PdfDictionary();
                 properties.put(PdfName.MCID, new PdfNumber(page.getNextMcid()));
 
-                // Create structure element and add marked content based on block type
+                // Process block based on type
+                PdfStructElem element = null;
                 PdfName role = null;
+
                 switch (blockType) {
-                    case "LINE":
-                        role = new PdfName(StandardRoles.P);
-                        break;
-                    case "TABLE":
-                        role = new PdfName(StandardRoles.TABLE);
-                        break;
-                    case "CELL":
-                        role = new PdfName(StandardRoles.TD);
-                        break;
-                    case "KEY_VALUE_SET":
-                        role = new PdfName(StandardRoles.DIV);
-                        break;
                     case "LAYOUT_SECTION_HEADER":
-                        role = new PdfName(StandardRoles.H1);
+                        int level = determineHeaderLevel(block);
+                        role = new PdfName("H" + level);
+                        element = new PdfStructElem(pdfDoc, role);
+                        documentRoot.addKid(element);
                         break;
-                    case "LAYOUT_TEXT":
-                        role = new PdfName(StandardRoles.P);
+
+                    case "TABLE":
+                        currentTable = new PdfStructElem(pdfDoc, PdfName.Table);
+                        element = currentTable;
+                        documentRoot.addKid(element);
+                        currentRowIndex = -1;
                         break;
-                    case "LAYOUT_FIGURE":
-                        role = new PdfName(StandardRoles.FIGURE);
+
+                    case "CELL":
+                        if (currentTable == null) {
+                            currentTable = new PdfStructElem(pdfDoc, PdfName.Table);
+                            documentRoot.addKid(currentTable);
+                        }
+
+                        int rowIndex = block.optInt("RowIndex", -1);
+                        if (rowIndex != currentRowIndex) {
+                            currentTableRow = new PdfStructElem(pdfDoc, PdfName.TR);
+                            currentTable.addKid(currentTableRow);
+                            currentRowIndex = rowIndex;
+                        }
+
+                        element = new PdfStructElem(pdfDoc, PdfName.TD);
+                        currentTableRow.addKid(element);
+                        role = PdfName.TD;
                         break;
+
                     case "LAYOUT_LIST":
-                        role = new PdfName(StandardRoles.L);
+                        currentList = new PdfStructElem(pdfDoc, PdfName.L);
+                        element = currentList;
+                        documentRoot.addKid(element);
+                        role = PdfName.L;
                         break;
-                    case "LAYOUT_TABLE":
-                        role = new PdfName(StandardRoles.TABLE);
+
+                    case "LINE":
+                        if (currentList != null && isListItem(block)) {
+                            PdfStructElem li = new PdfStructElem(pdfDoc, PdfName.LI);
+                            currentList.addKid(li);
+                            element = new PdfStructElem(pdfDoc, new PdfName("LBody"));
+                            li.addKid(element);
+                            role = new PdfName("LBody");
+                        } else {
+                            role = PdfName.P;
+                            element = new PdfStructElem(pdfDoc, role);
+                            documentRoot.addKid(element);
+                        }
                         break;
+
+                    case "LAYOUT_FIGURE":
+                        role = PdfName.Figure;
+                        element = new PdfStructElem(pdfDoc, role);
+                        documentRoot.addKid(element);
+                        break;
+
                     case "WORD":
-                        // Words are usually part of lines, so we skip them
+                        // Skip individual words as they're handled within LINE blocks
                         continue;
+
                     default:
-                        System.out.println("Unhandled block type: " + blockType);
-                        continue;
+                        role = PdfName.P;
+                        element = new PdfStructElem(pdfDoc, role);
+                        documentRoot.addKid(element);
+                        break;
                 }
 
-                if (role != null) {
-                    // Create structure element
-                    PdfStructElem element = new PdfStructElem(pdfDoc, role);
-                    pdfDoc.getStructTreeRoot().addKid(element);
-
+                if (element != null && role != null) {
                     // Begin marked content
                     canvas.beginMarkedContent(role, properties);
 
@@ -138,6 +181,15 @@ public class Main {
                     canvas.endMarkedContent();
 
                     blockCount++;
+                }
+
+                // Reset structure tracking when appropriate
+                if (blockType.equals("TABLE")) {
+                    currentTable = null;
+                    currentTableRow = null;
+                    currentRowIndex = -1;
+                } else if (blockType.equals("LAYOUT_LIST")) {
+                    currentList = null;
                 }
             }
 
@@ -152,6 +204,26 @@ public class Main {
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private static int determineHeaderLevel(JSONObject block) {
+        try {
+            String text = block.getString("Text").trim().toUpperCase();
+            if (text.contains("HEADER 2")) return 2;
+            if (text.contains("HEADER 3")) return 3;
+            return 1; // Default to H1
+        } catch (Exception e) {
+            return 1; // Default to H1 if there's any error
+        }
+    }
+
+    private static boolean isListItem(JSONObject block) {
+        try {
+            String text = block.getString("Text").trim();
+            return text.matches("^[\\-•\\*]\\s.*|^\\d+\\.\\s.*");
+        } catch (Exception e) {
+            return false;
         }
     }
 }
