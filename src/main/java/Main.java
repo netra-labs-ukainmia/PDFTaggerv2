@@ -54,7 +54,9 @@ public class Main {
             // Create document structure element as root
             PdfStructTreeRoot root = pdfDoc.getStructTreeRoot();
             TagTreePointer tagPointer = new TagTreePointer(pdfDoc);
-            tagPointer.setPageForTagging(page);
+
+            // Add Document root tag
+            tagPointer.addTag("Document");
 
             // Process JSON blocks
             System.out.println("Processing JSON blocks...");
@@ -88,33 +90,37 @@ public class Main {
                     height * pageHeight
                 );
 
-                // Get text at this location
-                String textAtLocation = block.optString("Text", "");
-
                 // Determine role and create structure element
                 String role = determineRole(blockType, block);
                 if (role != null) {
-                    // Set the appropriate role for the structure element
+                    // Set the page for tagging
+                    tagPointer.setPageForTagging(page);
+
+                    // Create structure element with proper role
                     tagPointer.addTag(role);
 
-                    // Create marked content
-                    PdfDictionary properties = new PdfDictionary();
-                    properties.put(PdfName.MCID, new PdfNumber(page.getNextMcid()));
+                    // Get text content from the block
+                    String textContent = block.optString("Text", "");
 
-                    // Begin marked content sequence
+                    // Create marked content properties
+                    PdfDictionary properties = new PdfDictionary();
+                    int mcid = page.getNextMcid();
+                    properties.put(PdfName.MCID, new PdfNumber(mcid));
+
+                    // Begin marked content
                     PdfCanvas canvas = new PdfCanvas(page);
-                    canvas.beginMarkedContent(new PdfName(role), properties);
+                    canvas.beginMarkedContent(PdfName.Span, properties);
 
                     // Mark the region (optional, for debugging)
                     canvas.setLineWidth(0.1f);
                     canvas.rectangle(rect);
                     canvas.stroke();
 
-                    // End marked content sequence
+                    // End marked content
                     canvas.endMarkedContent();
 
                     // Move tag pointer back to root for next element
-                    tagPointer.moveToParent();
+                    tagPointer.moveToRoot();
 
                     blockCount++;
                 }
