@@ -3,20 +3,16 @@ import com.itextpdf.kernel.pdf.tagging.*;
 import com.itextpdf.kernel.pdf.tagutils.TagTreePointer;
 import com.itextpdf.kernel.pdf.canvas.*;
 import com.itextpdf.kernel.geom.Rectangle;
-import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
 import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor;
 import com.itextpdf.kernel.pdf.canvas.parser.listener.LocationTextExtractionStrategy;
+import com.itextpdf.kernel.pdf.canvas.parser.PdfCanvasProcessor;
+import com.itextpdf.kernel.pdf.canvas.parser.listener.ITextExtractionStrategy;
 import java.io.*;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.json.JSONArray;
 
 public class Main {
-    private static PdfStructElem currentTable = null;
-    private static PdfStructElem currentTableRow = null;
-    private static PdfStructElem currentList = null;
-    private static int currentRowIndex = -1;
-
     public static void main(String[] args) {
         try {
             // Define file paths
@@ -51,24 +47,19 @@ public class Main {
             // Enable tagging
             pdfDoc.setTagged();
 
-            // Get the first page and create canvas
+            // Get the first page
             PdfPage page = pdfDoc.getPage(1);
-            PdfCanvas canvas = new PdfCanvas(page);
             float pageHeight = page.getPageSize().getHeight();
 
-            // Extract and print all text from the page
-            System.out.println("\nAll text on page:");
-            System.out.println(PdfTextExtractor.getTextFromPage(page));
-            System.out.println("-------------------\n");
+            // Create document structure element as root
+            PdfStructTreeRoot root = pdfDoc.getStructTreeRoot();
+            TagTreePointer tagPointer = new TagTreePointer(pdfDoc);
+            tagPointer.setPageForTagging(page);
 
             // Process JSON blocks
             System.out.println("Processing JSON blocks...");
             JSONArray blocks = jsonData.getJSONArray("Blocks");
             int blockCount = 0;
-
-            // Create document structure element as root
-            PdfStructElem documentRoot = new PdfStructElem(pdfDoc, PdfName.Document);
-            pdfDoc.getStructTreeRoot().addKid(documentRoot);
 
             for (int i = 0; i < blocks.length(); i++) {
                 JSONObject block = blocks.getJSONObject(i);
@@ -97,121 +88,35 @@ public class Main {
                     height * pageHeight
                 );
 
-                // Debug output
-                System.out.println("\nProcessing Block #" + i);
-                System.out.println("Type: " + blockType);
-                System.out.println("Coordinates: " + rect.toString());
-                if (block.has("Text")) {
-                    System.out.println("Text: " + block.getString("Text"));
-                }
-                System.out.println("-------------------");
+                // Get text at this location
+                String textAtLocation = block.optString("Text", "");
 
-                // Create properties for marked content
-                PdfDictionary properties = new PdfDictionary();
-                properties.put(PdfName.MCID, new PdfNumber(page.getNextMcid()));
+                // Determine role and create structure element
+                String role = determineRole(blockType, block);
+                if (role != null) {
+                    // Set the appropriate role for the structure element
+                    tagPointer.addTag(role);
 
-                // Process block based on type
-                PdfStructElem element = null;
-                PdfName role = null;
+                    // Create marked content
+                    PdfDictionary properties = new PdfDictionary();
+                    properties.put(PdfName.MCID, new PdfNumber(page.getNextMcid()));
 
-                switch (blockType) {
-                    case "LAYOUT_SECTION_HEADER":
-                        int level = determineHeaderLevel(block);
-                        role = new PdfName("H" + level);
-                        element = new PdfStructElem(pdfDoc, role);
-                        documentRoot.addKid(element);
-                        break;
+                    // Begin marked content sequence
+                    PdfCanvas canvas = new PdfCanvas(page);
+                    canvas.beginMarkedContent(new PdfName(role), properties);
 
-                    case "TABLE":
-                        currentTable = new PdfStructElem(pdfDoc, PdfName.Table);
-                        element = currentTable;
-                        documentRoot.addKid(element);
-                        currentRowIndex = -1;
-                        break;
+                    // Mark the region (optional, for debugging)
+                    canvas.setLineWidth(0.1f);
+                    canvas.rectangle(rect);
+                    canvas.stroke();
 
-                    case "CELL":
-                        if (currentTable == null) {
-                            currentTable = new PdfStructElem(pdfDoc, PdfName.Table);
-                            documentRoot.addKid(currentTable);
-                        }
-
-                        int rowIndex = block.optInt("RowIndex", -1);
-                        if (rowIndex != currentRowIndex) {
-                            currentTableRow = new PdfStructElem(pdfDoc, PdfName.TR);
-                            currentTable.addKid(currentTableRow);
-                            currentRowIndex = rowIndex;
-                        }
-
-                        element = new PdfStructElem(pdfDoc, PdfName.TD);
-                        currentTableRow.addKid(element);
-                        role = PdfName.TD;
-                        break;
-
-                    case "LAYOUT_LIST":
-                        currentList = new PdfStructElem(pdfDoc, PdfName.L);
-                        element = currentList;
-                        documentRoot.addKid(element);
-                        role = PdfName.L;
-                        break;
-
-                    case "LINE":
-                        if (currentList != null && isListItem(block)) {
-                            PdfStructElem li = new PdfStructElem(pdfDoc, PdfName.LI);
-                            currentList.addKid(li);
-                            element = new PdfStructElem(pdfDoc, new PdfName("LBody"));
-                            li.addKid(element);
-                            role = new PdfName("LBody");
-                        } else {
-                            role = PdfName.P;
-                            element = new PdfStructElem(pdfDoc, role);
-                            documentRoot.addKid(element);
-                        }
-                        break;
-
-                    case "LAYOUT_FIGURE":
-                        role = PdfName.Figure;
-                        element = new PdfStructElem(pdfDoc, role);
-                        documentRoot.addKid(element);
-                        break;
-
-                    case "WORD":
-                        // Skip individual words as they're handled within LINE blocks
-                        continue;
-
-                    default:
-                        role = PdfName.P;
-                        element = new PdfStructElem(pdfDoc, role);
-                        documentRoot.addKid(element);
-                        break;
-                }
-
-                if (element != null && role != null) {
-                    // Begin marked content
-                    canvas.beginMarkedContent(role, properties);
-
-                    // Try to get text at these coordinates
-                    String textAtLocation = getTextAtLocation(page, rect);
-                    if (textAtLocation != null && !textAtLocation.trim().isEmpty()) {
-                        System.out.println("Found text at location: " + textAtLocation);
-                    }
-
-                    // Create MCR and add to element
-                    PdfMcrDictionary mcr = new PdfMcrDictionary(page, element);
-                    element.addKid(mcr);
-
-                    // End marked content
+                    // End marked content sequence
                     canvas.endMarkedContent();
 
-                    blockCount++;
-                }
+                    // Move tag pointer back to root for next element
+                    tagPointer.moveToParent();
 
-                // Reset structure tracking when appropriate
-                if (blockType.equals("TABLE")) {
-                    currentTable = null;
-                    currentTableRow = null;
-                    currentRowIndex = -1;
-                } else if (blockType.equals("LAYOUT_LIST")) {
-                    currentList = null;
+                    blockCount++;
                 }
             }
 
@@ -229,35 +134,35 @@ public class Main {
         }
     }
 
-    private static String getTextAtLocation(PdfPage page, Rectangle rect) {
-        try {
-            LocationTextExtractionStrategy strategy = new LocationTextExtractionStrategy();
-            PdfCanvasProcessor processor = new PdfCanvasProcessor(strategy);
-            processor.processPageContent(page);
-            return strategy.getResultantText();
-        } catch (Exception e) {
-            System.err.println("Error extracting text: " + e.getMessage());
-            return null;
-        }
-    }
+    private static String determineRole(String blockType, JSONObject block) {
+        switch (blockType) {
+            case "LAYOUT_SECTION_HEADER":
+                String text = block.optString("Text", "").toUpperCase();
+                if (text.contains("HEADER 2")) return "H2";
+                if (text.contains("HEADER 3")) return "H3";
+                return "H1";
 
-    private static int determineHeaderLevel(JSONObject block) {
-        try {
-            String text = block.getString("Text").trim().toUpperCase();
-            if (text.contains("HEADER 2")) return 2;
-            if (text.contains("HEADER 3")) return 3;
-            return 1; // Default to H1
-        } catch (Exception e) {
-            return 1; // Default to H1 if there's any error
-        }
-    }
+            case "LINE":
+                return "P";
 
-    private static boolean isListItem(JSONObject block) {
-        try {
-            String text = block.getString("Text").trim();
-            return text.matches("^[\\-•\\*]\\s.*|^\\d+\\.\\s.*");
-        } catch (Exception e) {
-            return false;
+            case "TABLE":
+                return "Table";
+
+            case "CELL":
+                return "TD";
+
+            case "LAYOUT_LIST":
+                return "L";
+
+            case "LAYOUT_FIGURE":
+                return "Figure";
+
+            case "WORD":
+                // Skip individual words as they're handled within LINE blocks
+                return null;
+
+            default:
+                return "P";
         }
     }
 }
