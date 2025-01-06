@@ -1,12 +1,5 @@
 import com.itextpdf.kernel.pdf.*;
-import com.itextpdf.kernel.pdf.tagging.*;
-import com.itextpdf.kernel.pdf.tagutils.TagTreePointer;
-import com.itextpdf.kernel.pdf.canvas.*;
-import com.itextpdf.kernel.geom.Rectangle;
-import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor;
-import com.itextpdf.kernel.pdf.canvas.parser.listener.LocationTextExtractionStrategy;
-import com.itextpdf.kernel.pdf.canvas.parser.PdfCanvasProcessor;
-import com.itextpdf.kernel.pdf.canvas.parser.listener.ITextExtractionStrategy;
+import core.TaggingProcessor;
 import java.io.*;
 import org.json.JSONObject;
 import org.json.JSONTokener;
@@ -44,19 +37,11 @@ public class Main {
                 new PdfWriter(outputPath)
             );
 
-            // Enable tagging
-            pdfDoc.setTagged();
+            // Create TaggingProcessor
+            TaggingProcessor processor = new TaggingProcessor(pdfDoc);
 
             // Get the first page
             PdfPage page = pdfDoc.getPage(1);
-            float pageHeight = page.getPageSize().getHeight();
-
-            // Create document structure element as root
-            PdfStructTreeRoot root = pdfDoc.getStructTreeRoot();
-            TagTreePointer tagPointer = new TagTreePointer(pdfDoc);
-
-            // Add Document root tag
-            tagPointer.addTag("Document");
 
             // Process JSON blocks
             System.out.println("Processing JSON blocks...");
@@ -72,58 +57,9 @@ public class Main {
                     continue;
                 }
 
-                // Get geometry
-                JSONObject geometry = block.getJSONObject("Geometry");
-                JSONObject boundingBox = geometry.getJSONObject("BoundingBox");
-
-                // Get coordinates
-                float left = (float) boundingBox.getDouble("Left");
-                float top = (float) boundingBox.getDouble("Top");
-                float width = (float) boundingBox.getDouble("Width");
-                float height = (float) boundingBox.getDouble("Height");
-
-                // Create rectangle for the block
-                Rectangle rect = new Rectangle(
-                    left * page.getPageSize().getWidth(),
-                    (1 - top - height) * pageHeight,
-                    width * page.getPageSize().getWidth(),
-                    height * pageHeight
-                );
-
-                // Determine role and create structure element
-                String role = determineRole(blockType, block);
-                if (role != null) {
-                    // Set the page for tagging
-                    tagPointer.setPageForTagging(page);
-
-                    // Create structure element with proper role
-                    tagPointer.addTag(role);
-
-                    // Get text content from the block
-                    String textContent = block.optString("Text", "");
-
-                    // Create marked content properties
-                    PdfDictionary properties = new PdfDictionary();
-                    int mcid = page.getNextMcid();
-                    properties.put(PdfName.MCID, new PdfNumber(mcid));
-
-                    // Begin marked content
-                    PdfCanvas canvas = new PdfCanvas(page);
-                    canvas.beginMarkedContent(PdfName.Span, properties);
-
-                    // Mark the region (optional, for debugging)
-                    canvas.setLineWidth(0.1f);
-                    canvas.rectangle(rect);
-                    canvas.stroke();
-
-                    // End marked content
-                    canvas.endMarkedContent();
-
-                    // Move tag pointer back to root for next element
-                    tagPointer.moveToRoot();
-
-                    blockCount++;
-                }
+                // Process block using TaggingProcessor
+                processor.processBlock(block, page);
+                blockCount++;
             }
 
             System.out.println("Added tags to " + blockCount + " blocks");
@@ -137,38 +73,6 @@ public class Main {
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
-        }
-    }
-
-    private static String determineRole(String blockType, JSONObject block) {
-        switch (blockType) {
-            case "LAYOUT_SECTION_HEADER":
-                String text = block.optString("Text", "").toUpperCase();
-                if (text.contains("HEADER 2")) return "H2";
-                if (text.contains("HEADER 3")) return "H3";
-                return "H1";
-
-            case "LINE":
-                return "P";
-
-            case "TABLE":
-                return "Table";
-
-            case "CELL":
-                return "TD";
-
-            case "LAYOUT_LIST":
-                return "L";
-
-            case "LAYOUT_FIGURE":
-                return "Figure";
-
-            case "WORD":
-                // Skip individual words as they're handled within LINE blocks
-                return null;
-
-            default:
-                return "P";
         }
     }
 }
