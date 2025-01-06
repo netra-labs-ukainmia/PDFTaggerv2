@@ -3,9 +3,14 @@ package core;
 import com.itextpdf.kernel.pdf.*;
 import com.itextpdf.kernel.pdf.tagging.*;
 import com.itextpdf.kernel.pdf.tagutils.TagTreePointer;
+import com.itextpdf.kernel.pdf.tagutils.TagReference;
+import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
 import org.json.JSONObject;
 import java.util.*;
+import java.io.IOException;
 
 public class TaggingProcessor {
     private final PdfDocument pdfDoc;
@@ -124,7 +129,7 @@ public class TaggingProcessor {
         root.addNamespace(mathNamespace);
     }
 
-    public void processBlock(JSONObject block, PdfPage page) {
+    public void processBlock(JSONObject block, PdfPage page) throws IOException {
         this.currentPage = page;
         pointer.setPageForTagging(page);
 
@@ -150,12 +155,25 @@ public class TaggingProcessor {
             // Begin marked content
             canvas.beginMarkedContent(PdfName.Span, properties);
 
-            // Set structure element attributes
-            PdfStructElem elem = (PdfStructElem) pointer.getCurrentStructElem();
-            setStructureAttributes(elem, block, textContent);
+            // Set structure element attributes using the tag reference
+            TagReference tagRef = pointer.getTagReference();
+            canvas.openTag(tagRef);
+
+            // Add the actual text content
+            if (textContent != null && !textContent.isEmpty()) {
+                canvas.setTextRise(0)
+                      .beginText()
+                      .setFontAndSize(getDefaultFont(), 12)
+                      .moveText(0, 0)
+                      .showText(textContent)
+                      .endText();
+            }
 
             // Mark the region
             markRegion(canvas, boundingBox, page);
+
+            // Close the tag
+            canvas.closeTag();
 
             // End marked content
             canvas.endMarkedContent();
@@ -163,6 +181,10 @@ public class TaggingProcessor {
             // Move pointer back to root for next element
             pointer.moveToRoot();
         }
+    }
+
+    private PdfFont getDefaultFont() throws IOException {
+        return PdfFontFactory.createFont();
     }
 
     private PdfDictionary createProperties(JSONObject block, int mcid) {
@@ -175,26 +197,6 @@ public class TaggingProcessor {
         }
 
         return properties;
-    }
-
-    private void setStructureAttributes(PdfStructElem elem, JSONObject block, String textContent) {
-        // Set actual text
-        elem.setActualText(new PdfString(textContent));
-
-        // Set alternative text if available
-        if (block.has("Alt")) {
-            elem.setAlt(new PdfString(block.getString("Alt")));
-        }
-
-        // Set language if specified
-        if (block.has("Lang")) {
-            elem.setLang(new PdfString(block.getString("Lang")));
-        }
-
-        // Set expansion text if available
-        if (block.has("E")) {
-            elem.setE(new PdfString(block.getString("E")));
-        }
     }
 
     private void markRegion(PdfCanvas canvas, JSONObject boundingBox, PdfPage page) {

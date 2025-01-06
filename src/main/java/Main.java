@@ -47,6 +47,7 @@ public class Main {
             System.out.println("Processing JSON blocks...");
             JSONArray blocks = jsonData.getJSONArray("Blocks");
             int blockCount = 0;
+            int errorCount = 0;
 
             for (int i = 0; i < blocks.length(); i++) {
                 JSONObject block = blocks.getJSONObject(i);
@@ -57,21 +58,36 @@ public class Main {
                     continue;
                 }
 
-                // Process block using TaggingProcessor
-                processor.processBlock(block, page);
-                blockCount++;
+                try {
+                    // Process block using TaggingProcessor
+                    processor.processBlock(block, page);
+                    blockCount++;
+                    if (blockCount % 10 == 0) {
+                        System.out.println("Processed " + blockCount + " blocks...");
+                    }
+                } catch (IOException e) {
+                    System.err.println("Error processing block " + i + ": " + e.getMessage());
+                    errorCount++;
+                } catch (Exception e) {
+                    System.err.println("Unexpected error processing block " + i + ": " + e.getMessage());
+                    errorCount++;
+                }
             }
 
-            System.out.println("Added tags to " + blockCount + " blocks");
+            System.out.println("Processing completed:");
+            System.out.println("- Successfully tagged blocks: " + blockCount);
+            if (errorCount > 0) {
+                System.out.println("- Blocks with errors: " + errorCount);
+            }
 
             // Close everything
             reader.close();
             pdfDoc.close();
 
-            System.out.println("Process completed. Tagged PDF saved to: " + outputPath);
+            System.out.println("PDF saved to: " + outputPath);
 
         } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
+            System.err.println("Fatal error: " + e.getMessage());
             e.printStackTrace();
         }
     }
