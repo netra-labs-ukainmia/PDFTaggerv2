@@ -3,13 +3,15 @@ import com.itextpdf.kernel.pdf.tagging.*;
 import com.itextpdf.kernel.pdf.tagutils.TagTreePointer;
 import com.itextpdf.kernel.pdf.canvas.*;
 import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
+import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor;
+import com.itextpdf.kernel.pdf.canvas.parser.listener.LocationTextExtractionStrategy;
 import java.io.*;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.json.JSONArray;
 
 public class Main {
-    // Class-level variables to track structure
     private static PdfStructElem currentTable = null;
     private static PdfStructElem currentTableRow = null;
     private static PdfStructElem currentList = null;
@@ -54,6 +56,11 @@ public class Main {
             PdfCanvas canvas = new PdfCanvas(page);
             float pageHeight = page.getPageSize().getHeight();
 
+            // Extract and print all text from the page
+            System.out.println("\nAll text on page:");
+            System.out.println(PdfTextExtractor.getTextFromPage(page));
+            System.out.println("-------------------\n");
+
             // Process JSON blocks
             System.out.println("Processing JSON blocks...");
             JSONArray blocks = jsonData.getJSONArray("Blocks");
@@ -89,6 +96,15 @@ public class Main {
                     width * page.getPageSize().getWidth(),
                     height * pageHeight
                 );
+
+                // Debug output
+                System.out.println("\nProcessing Block #" + i);
+                System.out.println("Type: " + blockType);
+                System.out.println("Coordinates: " + rect.toString());
+                if (block.has("Text")) {
+                    System.out.println("Text: " + block.getString("Text"));
+                }
+                System.out.println("-------------------");
 
                 // Create properties for marked content
                 PdfDictionary properties = new PdfDictionary();
@@ -173,6 +189,12 @@ public class Main {
                     // Begin marked content
                     canvas.beginMarkedContent(role, properties);
 
+                    // Try to get text at these coordinates
+                    String textAtLocation = getTextAtLocation(page, rect);
+                    if (textAtLocation != null && !textAtLocation.trim().isEmpty()) {
+                        System.out.println("Found text at location: " + textAtLocation);
+                    }
+
                     // Create MCR and add to element
                     PdfMcrDictionary mcr = new PdfMcrDictionary(page, element);
                     element.addKid(mcr);
@@ -204,6 +226,18 @@ public class Main {
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private static String getTextAtLocation(PdfPage page, Rectangle rect) {
+        try {
+            LocationTextExtractionStrategy strategy = new LocationTextExtractionStrategy();
+            PdfCanvasProcessor processor = new PdfCanvasProcessor(strategy);
+            processor.processPageContent(page);
+            return strategy.getResultantText();
+        } catch (Exception e) {
+            System.err.println("Error extracting text: " + e.getMessage());
+            return null;
         }
     }
 
